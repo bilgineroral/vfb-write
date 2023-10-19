@@ -4,9 +4,10 @@ use ieee.numeric_std.all;
 
 entity FBW_CTRL_v1_0_M00_AXI is
 	generic (
-		-- The master requires a target slave base address.
-    -- The master will initiate read and write transactions on the slave with base address specified here as a parameter.
-		C_M_TARGET_SLAVE_BASE_ADDR	: std_logic_vector	:= x"40000000";
+		-- Base address for the Frame Buffer Write slave IP.
+		C_M_TARGET_SLAVE_BASE_ADDR_W	: std_logic_vector	:= x"40000000";
+		-- Base address for the Frame Buffer Read slave IP.
+		C_M_TARGET_SLAVE_BASE_ADDR_R	: std_logic_vector	:= x"A0040000";
 		-- Width of M_AXI address bus. 
     -- The master generates the read and write addresses of width specified as C_M_AXI_ADDR_WIDTH.
 		C_M_AXI_ADDR_WIDTH	: integer	:= 32;
@@ -78,12 +79,18 @@ architecture implementation of FBW_CTRL_v1_0_M00_AXI is
 
     -- state declarations
 	 type state is (IDLE, -- wait idle until "init_axi_txn"
-	                SET_HEIGHT, -- set the frame height
-	                SET_WIDTH, -- set the frame width
-	                SET_STRIDE, -- set the stride value (# of bytes between successive lines in a frame)
-	                ADDR_CONFIG, -- set the write address
-	                ENABLE, -- enable IP
-	                READ); -- read the register at offset=0x0
+	                W_SET_HEIGHT, -- set the frame height for Frame Buffer Write IP
+	                W_SET_WIDTH, -- set the frame width for Frame Buffer Write IP
+	                W_SET_STRIDE, -- set the stride value (# of bytes between successive lines in a frame) for Frame Buffer Write IP
+	                R_SET_HEIGHT, -- set the frame height for Frame Buffer Read IP
+	                R_SET_WIDTH, -- set the frame width for Frame Buffer Read IP
+	                R_SET_STRIDE, -- set the stride value (# of bytes between successive lines in a frame) for Frame Buffer Read IP
+	                W_ADDR_CONFIG, -- set the write address for Frame Buffer Write IP	              
+	                W_ENABLE, -- enable Frame Buffer Write IP
+	                CHECK_W_DONE, -- read the register at offset=0x0 of Frame Buffer Write IP
+	                R_ADDR_CONFIG, -- set the read address for Frame Buffer Read IP
+	                R_ENABLE -- -- enable Frame Buffer Read IP
+	                ); 
 
 	 signal mst_exec_state  : state ; 
 
@@ -113,9 +120,10 @@ architecture implementation of FBW_CTRL_v1_0_M00_AXI is
 	--Asserts when a single beat read transaction is issued and remains asserted till the completion of read trasaction.
 	signal read_issued	: std_logic;
 	--Asserts when the slave interface finishes writing an entire frame.
-	signal ap_done      : std_logic;
+	signal w_ap_done      : std_logic;
 	--Counts the number of frames buffered in the memory, wraps around after 2 (0, 1, 2, 0, 1, 2, ..)
-	signal frame_write_count: std_logic_vector (1 downto 0) := "00";
+	signal frame_write_count: std_logic_vector (1 downto 0) := "00"; -- (0)
+	signal frame_read_count: std_logic_vector (1 downto 0) := "11"; -- (-1), follows the write counter 1 frame behind
 	
 	signal init_txn_ff	: std_logic;
 	signal init_txn_ff2	: std_logic;
@@ -125,7 +133,12 @@ architecture implementation of FBW_CTRL_v1_0_M00_AXI is
 
 begin
 	--Adding the offset address to the base addr of the slave
-	M_AXI_AWADDR	<= std_logic_vector (unsigned(C_M_TARGET_SLAVE_BASE_ADDR) + unsigned(axi_awaddr));
+	M_AXI_AWADDR	<= std_logic_vector (unsigned(C_M_TARGET_SLAVE_BASE_ADDR_W) + unsigned(axi_awaddr)) when  
+	                       mst_exec_state = IDLE or mst_exec_state = W_SET_HEIGHT or mst_exec_state = W_SET_WIDTH
+	                       or mst_exec_state = W_SET_STRIDE or mst_exec_state = W_ADDR_CONFIG
+	                       or mst_exec_state = W_ENABLE or mst_exec_state = CHECK_W_DONE
+	                   else std_logic_vector (unsigned(C_M_TARGET_SLAVE_BASE_ADDR_R) + unsigned(axi_awaddr));
+	                  
 	--AXI 4 write data
 	M_AXI_WDATA	<= axi_wdata;
 	M_AXI_AWPROT	<= "000";
@@ -137,12 +150,12 @@ begin
 	--Write Response (B)
 	M_AXI_BREADY	<= axi_bready;
 	--Read Address (AR)
-	M_AXI_ARADDR	<= std_logic_vector(unsigned(C_M_TARGET_SLAVE_BASE_ADDR));
+	M_AXI_ARADDR	<= std_logic_vector(unsigned(C_M_TARGET_SLAVE_BASE_ADDR_W));
 	M_AXI_ARVALID	<= axi_arvalid;
 	M_AXI_ARPROT	<= "001";
 	--Read and Read Response (R)
 	M_AXI_RREADY	<= axi_rready;
-	ap_done         <= M_AXI_RDATA(1); -- ap_done is the 2nd least significant bit of the register at offset=0x0
+	w_ap_done         <= M_AXI_RDATA(1); -- ap_done is the 2nd least significant bit of the register at offset=0x0
 	init_txn_pulse	<= ( not init_txn_ff2)  and  init_txn_ff;
 
 	--Generate a pulse to initiate AXI transaction.
@@ -320,18 +333,28 @@ begin
 	      begin                                                                            
 	    	if (rising_edge (M_AXI_ACLK)) then                                              
 	    	  if (M_AXI_ARESETN = '0' or init_txn_pulse = '1') then                                                
-	    	    axi_awaddr <= x"0000_0010"; -- offset: 0x10 to set height                                              
+	    	    axi_awaddr <= x"0000_0010"; -- offset: 0x10 to set height for Frame Buffer Write IP                                              
 	    	  elsif (M_AXI_AWREADY = '1' and axi_awvalid = '1') then                        	    	                                                      
 	    	    case mst_exec_state is	    	                        
-                  when SET_HEIGHT =>
-                    axi_awaddr <= x"0000_0018"; -- offset: 0x18 to set width
-                  when SET_WIDTH =>
-                    axi_awaddr <= x"0000_0020"; -- offset: 0x20 to set stride
-                  when SET_STRIDE =>
-                    axi_awaddr <= x"0000_0028"; -- offset: 0x28 to set address to which we write the frame
-                  when ADDR_CONFIG => 
-                    axi_awaddr <= x"0000_0000"; -- offset: 0x0 to enable IP
-                  when READ => 
+                  when W_SET_HEIGHT =>
+                    axi_awaddr <= x"0000_0018"; -- offset: 0x18 to set width for Frame Buffer Write IP
+                  when W_SET_WIDTH =>
+                    axi_awaddr <= x"0000_0020"; -- offset: 0x20 to set stride for Frame Buffer Write IP
+                  when W_SET_STRIDE =>
+                    axi_awaddr <= x"0000_0010"; -- offset: 0x10 to set height for Frame Buffer Read IP
+                  when R_SET_HEIGHT =>
+                    axi_awaddr <= x"0000_0018"; -- offset: 0x18 to set width for Frame Buffer Read IP
+                  when R_SET_WIDTH => 
+                    axi_awaddr <= x"0000_0020"; -- offset: 0x20 to set stride for Frame Buffer Write IP
+                  when R_SET_STRIDE => 
+                    axi_awaddr <= x"0000_0028"; -- offset: 0x28 to set address to which we write the frame (for Frame Buffer Write IP)
+                  when W_ADDR_CONFIG => 
+                    axi_awaddr <= x"0000_0000"; -- offset: 0x0 to enable Frame Buffer Write IP                 
+                  when CHECK_W_DONE => 
+                    axi_awaddr <= x"0000_0028"; -- offset: 0x28 to set address to which we read the frame (for Frame Buffer Read IP)
+                  when R_ADDR_CONFIG =>
+                    axi_awaddr <= x"0000_0000"; -- offset: 0x0 to enable Frame Buffer READ IP
+                  when R_ENABLE =>                     
                     axi_awaddr <= x"0000_0028"; -- offset: 0x28 to set address to which we write the frame
                   when others =>
                     axi_awaddr <= x"0000_0000";
@@ -345,17 +368,26 @@ begin
 		  begin                                                                             
 		    if (rising_edge (M_AXI_ACLK)) then                                              
 	    	  if (M_AXI_ARESETN = '0' or init_txn_pulse = '1') then                                                
-	    	    axi_wdata <= x"0000_0438"; --  height = 1080 (0x438) OR 100 (0x64)                                     
+	    	    axi_wdata <= x"0000_0064"; --  height = 1080 (0x438) OR 100 (0x64) (for Frame Buffer Write)                                    
 	    	  elsif (M_AXI_WREADY = '1' and axi_wvalid = '1') then                        	    	                                                      
 	    	    case mst_exec_state is	    	                        
-                  when SET_HEIGHT =>
-                    axi_wdata <= x"0000_0780"; -- width = 1920 (0x780) OR 100 (0x64)
+                  when W_SET_HEIGHT =>
+                    axi_wdata <= x"0000_0064"; -- width = 1920 (0x780) OR 100 (0x64) (for Frame Buffer Write)
                     
-                  when SET_WIDTH =>
-                    axi_wdata <= x"0000_2000"; -- stride = 8192
+                  when W_SET_WIDTH =>
+                    axi_wdata <= x"0000_0200"; -- stride = 8192 (0x2000) OR 512 (0x200) (for Frame Buffer Write)
                     
-                  when SET_STRIDE =>
-                    if frame_write_count = "00" then
+                  when W_SET_STRIDE =>
+                    axi_wdata <= x"0000_0064"; --  height = 1080 (0x438) OR 100 (0x64) (for Frame Buffer Read)
+                  
+                  when R_SET_HEIGHT =>
+                     axi_wdata <= x"0000_0064"; -- width = 1920 (0x780) OR 100 (0x64) (for Frame Buffer Read)
+                     
+                  when R_SET_WIDTH => 
+                    axi_wdata <= x"0000_0200"; -- stride = 8192 (for Frame Buffer Read)
+                  
+                  when R_SET_STRIDE =>
+                    if frame_write_count = "00" then -- set write addresses for Frame Buffer Write IP
                       axi_wdata <= x"0A00_0000"; 
                     elsif frame_write_count = "01" then
                       axi_wdata <= x"0A10_0000";
@@ -363,10 +395,22 @@ begin
                       axi_wdata <= x"0A20_0000";
                     end if; 
                     
-                  when ADDR_CONFIG =>                                         
-                    axi_wdata <= x"0000_0001"; -- enable = 0x0000_0001 (enable IP)
+                  when W_ADDR_CONFIG =>                                         
+                    axi_wdata <= x"0000_0001"; -- enable = 0x0000_0001 (enable Frame Buffer Write IP)                    
                     
-                  when READ => 
+                  when CHECK_W_DONE =>
+                    if frame_read_count = "00" then -- set read addresses for Frame Buffer Read IP
+                      axi_wdata <= x"0A00_0000"; 
+                    elsif frame_read_count = "01" then
+                      axi_wdata <= x"0A10_0000";
+                    else 
+                      axi_wdata <= x"0A20_0000";
+                    end if;
+                    
+                  when R_ADDR_CONFIG =>
+                    axi_wdata <= x"0000_0001"; -- enable = 0x0000_0001 (enable Frame Buffer Read IP)                    
+
+                  when R_ENABLE => 
                     if frame_write_count = "00" then
                       axi_wdata <= x"0A00_0000"; 
                     elsif frame_write_count = "01" then
@@ -388,7 +432,7 @@ begin
 	    if (rising_edge (M_AXI_ACLK)) then                                                              
 	      if (M_AXI_ARESETN = '0' ) then                                                                
 	        -- reset condition                                                                          
-	        -- All the signals are ed default values under reset condition                              
+	        -- All the signals are fed default values under reset condition                              
 	        mst_exec_state  <= IDLE;                                                            
 	        start_single_write <= '0';                                                                  
 	        write_issued   <= '0';                                                                      
@@ -402,12 +446,12 @@ begin
 	            -- This state is responsible to initiate
 	            -- AXI transaction when init_txn_pulse is asserted 
 	            if ( init_txn_pulse = '1') then    
-	              mst_exec_state  <= SET_HEIGHT;                                                        
+	              mst_exec_state  <= W_SET_HEIGHT;                                                        
 	            else                                                                                    
 	              mst_exec_state  <= IDLE;                                                      
 	            end if;                                                                                 
 	                                                                                                    
-	          when SET_HEIGHT =>                                                                                                                           
+	          when W_SET_HEIGHT =>                                                                                                                           
 	                                                                                                   
 	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
 	                start_single_write = '0' and write_issued = '0') then          
@@ -420,10 +464,10 @@ begin
 	              end if;
 	                                                                                             
 	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
-                    mst_exec_state <= SET_WIDTH;
+                    mst_exec_state <= W_SET_WIDTH;
                   end if;                                                                            
 	                                                                                                    
-	          when SET_WIDTH =>                                                                                                                           
+	          when W_SET_WIDTH =>                                                                                                                           
 	                                                                                                   
 	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
 	                start_single_write = '0' and write_issued = '0') then          
@@ -436,10 +480,10 @@ begin
 	              end if;
 	                                                                                             
 	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
-                    mst_exec_state <= SET_STRIDE;
+                    mst_exec_state <= W_SET_STRIDE;
                   end if;                       
                   
-              when SET_STRIDE =>                                                                                                                           
+              when W_SET_STRIDE =>                                                                                                                           
 	                                                                                                   
 	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
 	                start_single_write = '0' and write_issued = '0') then          
@@ -452,10 +496,58 @@ begin
 	              end if;
 	                                                                                             
 	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
-                    mst_exec_state <= ADDR_CONFIG;
+	                mst_exec_state <= R_SET_HEIGHT;
+	              end if;
+	              
+	          when R_SET_HEIGHT =>                                                                                                                           
+	                                                                                                   
+	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
+	                start_single_write = '0' and write_issued = '0') then          
+	                start_single_write <= '1';                                                          
+	                write_issued  <= '1';                                                               
+	              elsif (axi_bready = '1') then                                                         
+	                write_issued   <= '0';                                                              
+	              else                                                                                  
+	                start_single_write <= '0'; --Negate to generate a pulse                             
+	              end if;
+	                                                                                             
+	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
+                    mst_exec_state <= R_SET_WIDTH;
+                  end if;                                                                            
+	                                                                                                    
+	          when R_SET_WIDTH =>                                                                                                                           
+	                                                                                                   
+	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
+	                start_single_write = '0' and write_issued = '0') then          
+	                start_single_write <= '1';                                                          
+	                write_issued  <= '1';                                                               
+	              elsif (axi_bready = '1') then                                                         
+	                write_issued   <= '0';                                                              
+	              else                                                                                  
+	                start_single_write <= '0'; --Negate to generate a pulse                             
+	              end if;
+	                                                                                             
+	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
+                    mst_exec_state <= R_SET_STRIDE;
+                  end if;                       
+                  
+              when R_SET_STRIDE =>                                                                                                                           
+	                                                                                                   
+	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
+	                start_single_write = '0' and write_issued = '0') then          
+	                start_single_write <= '1';                                                          
+	                write_issued  <= '1';                                                               
+	              elsif (axi_bready = '1') then                                                         
+	                write_issued   <= '0';                                                              
+	              else                                                                                  
+	                start_single_write <= '0'; --Negate to generate a pulse                             
+	              end if;
+	                                                                                             
+	              if (M_AXI_BVALID = '1' and axi_bready = '1') then	                
+                    mst_exec_state <= W_ADDR_CONFIG;
                   end if;     
               
-              when ADDR_CONFIG =>                                                                                                                           
+              when W_ADDR_CONFIG =>                                                                                                                           
 	                                                                                                   
 	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
 	                start_single_write = '0' and write_issued = '0') then          
@@ -468,10 +560,10 @@ begin
 	              end if;
 	                                                                                             
 	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
-                    mst_exec_state <= ENABLE;
+                    mst_exec_state <= W_ENABLE;
                   end if;                   
               
-              when ENABLE =>                                                                                                                           
+              when W_ENABLE =>                                                                                                                           
 	                                                                                                   
 	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
 	                start_single_write = '0' and write_issued = '0') then          
@@ -484,10 +576,10 @@ begin
 	              end if;
 	                                                                                             
 	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
-                    mst_exec_state <= READ;
+                    mst_exec_state <= CHECK_W_DONE;
                   end if;                                           
 	                                                                                                    
-              when READ =>     
+              when CHECK_W_DONE =>     
               
                 if (axi_arvalid = '0' and M_AXI_RVALID = '0' and                  
 	                start_single_read = '0' and read_issued = '0') then                                 
@@ -499,13 +591,52 @@ begin
 	                start_single_read <= '0'; --Negate to generate a pulse                              
 	              end if;
 	                                                                        
-	            if (ap_done = '1' and M_AXI_RVALID = '1' and axi_rready = '1') then
-	               mst_exec_state <= ADDR_CONFIG;	
-	               frame_write_count <= std_logic_vector(unsigned(frame_write_count) + 1); -- increment the number of frames buffered for address config.  
+	            if (w_ap_done = '1' and M_AXI_RVALID = '1' and axi_rready = '1') then
+	               mst_exec_state <= R_ADDR_CONFIG;	
+	               
+	               frame_write_count <= std_logic_vector(unsigned(frame_write_count) + 1); -- increment frame buffer counter for address config (Frame Buffer Write)
+	               frame_read_count <= std_logic_vector(unsigned(frame_write_count) + 1); -- increment frame buffer counter for address config (Frame Buffer Read)  
 	               if frame_write_count = "11" then -- wrap around after after 2
 	                   frame_write_count <= "00";
-	               end if;                       
+	               end if;
+	               
+	               if frame_read_count = "11" then -- wrap around after after 2
+	                   frame_read_count <= "00";
+	               end if;
+	                                      
 	            end if;
+	            
+	          when R_ADDR_CONFIG =>                                                                                                                           
+	                                                                                                   
+	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
+	                start_single_write = '0' and write_issued = '0') then          
+	                start_single_write <= '1';                                                          
+	                write_issued  <= '1';                                                               
+	              elsif (axi_bready = '1') then                                                         
+	                write_issued   <= '0';                                                              
+	              else                                                                                  
+	                start_single_write <= '0'; --Negate to generate a pulse                             
+	              end if;
+	                                                                                             
+	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
+                    mst_exec_state <= R_ENABLE;
+                  end if;
+                 
+              when R_ENABLE =>                                                                                                                           
+	                                                                                                   
+	              if (axi_awvalid = '0' and axi_wvalid = '0' and M_AXI_BVALID = '0' and                 
+	                start_single_write = '0' and write_issued = '0') then          
+	                start_single_write <= '1';                                                          
+	                write_issued  <= '1';                                                               
+	              elsif (axi_bready = '1') then                                                         
+	                write_issued   <= '0';                                                              
+	              else                                                                                  
+	                start_single_write <= '0'; --Negate to generate a pulse                             
+	              end if;
+	                                                                                             
+	              if (M_AXI_BVALID = '1' and axi_bready = '1') then
+                    mst_exec_state <= W_ADDR_CONFIG;
+                  end if;
 	                                                                                                   
 	          when others  =>                                                                           
 	              mst_exec_state  <= IDLE;                                                      

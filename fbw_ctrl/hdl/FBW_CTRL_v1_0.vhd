@@ -5,7 +5,8 @@ use ieee.numeric_std.all;
 entity FBW_CTRL_v1_0 is
 	generic (
 		-- Parameters of Axi Master Bus Interface M00_AXI
-		C_M00_AXI_TARGET_SLAVE_BASE_ADDR	: std_logic_vector	:= x"40000000";
+		C_M00_AXI_TARGET_SLAVE_BASE_ADDR_W	: std_logic_vector	:= x"40000000";
+		C_M00_AXI_TARGET_SLAVE_BASE_ADDR_R	: std_logic_vector	:= x"A0040000";
 		C_M00_AXI_ADDR_WIDTH	: integer	:= 32;
 		C_M00_AXI_DATA_WIDTH	: integer	:= 32
 	);
@@ -41,7 +42,8 @@ architecture arch_imp of FBW_CTRL_v1_0 is
 	-- component declaration
 	component FBW_CTRL_v1_0_M00_AXI is
 		generic (
-		C_M_TARGET_SLAVE_BASE_ADDR	: std_logic_vector	:= x"40000000";
+		C_M_TARGET_SLAVE_BASE_ADDR_W	: std_logic_vector	:= x"40000000";
+		C_M_TARGET_SLAVE_BASE_ADDR_R	: std_logic_vector	:= x"A0040000";
 		C_M_AXI_ADDR_WIDTH	: integer	:= 32;
 		C_M_AXI_DATA_WIDTH	: integer	:= 32
 		);
@@ -76,7 +78,8 @@ begin
 -- Instantiation of Axi Bus Interface M00_AXI
 FBW_CTRL_v1_0_M00_AXI_inst : FBW_CTRL_v1_0_M00_AXI
 	generic map (
-		C_M_TARGET_SLAVE_BASE_ADDR	=> C_M00_AXI_TARGET_SLAVE_BASE_ADDR,
+		C_M_TARGET_SLAVE_BASE_ADDR_W	=> C_M00_AXI_TARGET_SLAVE_BASE_ADDR_W,
+		C_M_TARGET_SLAVE_BASE_ADDR_R	=> C_M00_AXI_TARGET_SLAVE_BASE_ADDR_R,
 		C_M_AXI_ADDR_WIDTH	=> C_M00_AXI_ADDR_WIDTH,
 		C_M_AXI_DATA_WIDTH	=> C_M00_AXI_DATA_WIDTH
 	)

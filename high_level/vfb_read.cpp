@@ -1,8 +1,6 @@
 #include "vfb_read.h"
 
 void frame_read (int* height, int* width, int* stride, int* baseAddr, hls::stream<axis_t> &s_axis_video) {
-	// instead of just declaring everyting int*, you can consider changing the data types for optimizations
-	// for example, ap_uint<512>* baseAddr => which would cause a change in the code below too (stride/16)
 #pragma HLS INTERFACE axis register_mode=both register port=s_axis_video
 #pragma HLS INTERFACE mode=s_axilite port=height
 #pragma HLS INTERFACE mode=s_axilite port=width
@@ -26,7 +24,6 @@ void frame_read (int* height, int* width, int* stride, int* baseAddr, hls::strea
 		for (int col = 0; col < *width; col++) {
 			tdata = baseAddr[row * ((*stride)/4) + col];
 			readData.data = tdata;
-			//readData.data = baseAddr[row * ((*stride)/4) + col];
 			if (row == 0 && col == 0)
 				readData.user = 1;
 			else

@@ -3,14 +3,6 @@
 
 int main() {
 
-	// std::ofstream outFile;
-	// outFile.open("tb_results.txt");
-
-	/* if (!outFile.is_open()) {
-		std::cerr << "Failed to open the file for writing." << std::endl;
-		return 1;
-	}*/
-
 	std::cout << "~~ Starting C simulation ~~" << std::endl;
 
 	hls::stream<axisPixel> mockImageStream;
@@ -18,7 +10,6 @@ int main() {
 	int width = 100;
 	int stride = 512;
 	int* baseAddr = new int[51200];
-	// int baseAddr[1000];
 	axisPixel pixel;
 
 	std::cout << "~~ Creating mock image stream ~~" << std::endl;
@@ -27,9 +18,6 @@ int main() {
 		for(int j=0;j<100;j++) {
 
 			 pixel.data = data;
-			 /* pixel.keep = -1;
-			 pixel.strb = -1;
-			 pixel.user = 1; */
 			 if (j == 9)
 				 pixel.last = 1;
 			 else
@@ -53,7 +41,6 @@ int main() {
 				std::cout << "~~ Expected Data= " << expectedData << std::endl;
 				std::cout << "~~ Read data= " << readData << std::endl;
 				std::cout << "~~ row= " << row << ", col= " << col << std::endl;
-				//outFile.close();
 				std::cout << "~~ Simulation failed! ~~" << std::endl;
 				return 1;
 			}
@@ -61,12 +48,6 @@ int main() {
 		}
 	}
 
-	/* std::cout << "~~ Writing into tb_results.txt ~~" << std::endl;
-	for (int k = 0; k < 499; k++) {
-		outFile << baseAddr[k] << std::endl;
-	}*/
-
-	// outFile.close();
 	std::cout << "~~ Simulation finished without errors ~~" << std::endl;
 	return 0;
 }
